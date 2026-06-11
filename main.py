@@ -87,6 +87,8 @@ class GameApp:
         self.last_special_spawn = time.time()
         self.game_over = False
         self.game_won = False
+        self.score = 0
+        self.paused = False
 
     def get_vacant_cells(self):
         occupied = set(self.snake.body)
@@ -109,26 +111,26 @@ class GameApp:
             self.normal_food = NormalFood(pos[0], pos[1])
 
     def resolve_food_interaction(self, next_head_pos):
-        """Resolve food collisions and return growth or shrink amounts."""
+        """Resolve food collisions and return (grow, shrink, points)."""
         if next_head_pos == self.normal_food.get_position():
             self.spawn_normal_food()
-            return 1, 0
+            return 1, 0, 10
 
         eaten_item = next(
             (sf for sf in self.special_foods if next_head_pos == sf.get_position()),
             None,
         )
         if eaten_item is None:
-            return 0, 0
+            return 0, 0, 0
 
         self.special_foods.remove(eaten_item)
         if isinstance(eaten_item, SuperFood):
-            return 3, 0
+            return 3, 0, 50
 
         if isinstance(eaten_item, PoisonFood):
-            return 0, max(1, len(self.snake.body) // 2)
+            return 0, max(1, len(self.snake.body) // 2), 0
 
-        return 0, 0
+        return 0, 0, 0
 
     @log_game_event
     def trigger_special_spawn(self):
@@ -147,6 +149,8 @@ class GameApp:
         return f"Dispatched entities matrix: {choice}"
 
     def start_game(self):
+        if not self.name_input.text:
+            self.name_input.text = "Anonymous"
         self.reset_game_state()
         self.state = "GAME"
 
@@ -165,7 +169,11 @@ class GameApp:
             self.process_events()
             self.update_states()
             self.render_graphics()
-            self.clock.tick(FPS)
+            if self.state == "GAME" and not self.game_over and not self.game_won and not self.paused:
+                speed = min(FPS + len(self.snake.body) // 5, 20)
+            else:
+                speed = FPS
+            self.clock.tick(speed)
 
     def process_events(self):
         """Process all pending events for the current application state."""
@@ -189,6 +197,18 @@ class GameApp:
         if event.type != pygame.KEYDOWN:
             return
 
+        if event.key == pygame.K_p and not self.game_over and not self.game_won:
+            self.paused = not self.paused
+            return
+
+        if event.key == pygame.K_ESCAPE:
+            self.paused = False
+            self.state = "MENU"
+            return
+
+        if self.paused:
+            return
+
         if event.key in (pygame.K_UP, pygame.K_w):
             self.snake.change_direction((0, -1))
         elif event.key in (pygame.K_DOWN, pygame.K_s):
@@ -197,13 +217,11 @@ class GameApp:
             self.snake.change_direction((-1, 0))
         elif event.key in (pygame.K_RIGHT, pygame.K_d):
             self.snake.change_direction((1, 0))
-        elif event.key == pygame.K_ESCAPE:
-            self.state = "MENU"
         elif event.key == pygame.K_r and (self.game_over or self.game_won):
             self.reset_game_state()
 
     def update_states(self):
-        if self.state != "GAME" or self.game_over or self.game_won:
+        if self.state != "GAME" or self.game_over or self.game_won or self.paused:
             return
 
         self.special_foods = [sf for sf in self.special_foods if sf.update()]
@@ -216,17 +234,18 @@ class GameApp:
         dx, dy = self.snake.next_direction
         next_head_pos = (head_x + dx, head_y + dy)
 
-        grow, shrink = self.resolve_food_interaction(next_head_pos)
+        grow, shrink, points = self.resolve_food_interaction(next_head_pos)
+        self.score += points
         self.snake.move(grow=grow, shrink=shrink)
 
         if len(self.snake.body) == 0 or self.snake.check_collision(GRID_WIDTH, GRID_HEIGHT):
             self.game_over = True
-            self.history_manager.save_record(self.name_input.text, len(self.snake.body))
+            self.history_manager.save_record(self.name_input.text, self.score)
             return
 
         if len(self.snake.body) >= TOTAL_TILES:
             self.game_won = True
-            self.history_manager.save_record(self.name_input.text, len(self.snake.body))
+            self.history_manager.save_record(self.name_input.text, self.score)
 
     # ── High-Fidelity Food Drawing Interceptor ─────────────────────────────────
     def draw_polished_food(self, food):
@@ -235,11 +254,9 @@ class GameApp:
         cy = row * GRID_SIZE + GRID_SIZE // 2 + HUD_HEIGHT
         r = GRID_SIZE // 2 - 1
 
-        # Class matching verification layer
-        cname = food.__class__.__name__
-        if cname == "SuperFood":
+        if isinstance(food, SuperFood):
             label = "⭐"
-        elif cname == "PoisonFood":
+        elif isinstance(food, PoisonFood):
             label = "💀"
         else:
             label = "🍎"
@@ -264,7 +281,7 @@ class GameApp:
             lbl_surf = emoji_font.render(label, True, (255, 255, 255))
             lbl_rect = lbl_surf.get_rect(center=(cx, cy))
             self.screen.blit(lbl_surf, lbl_rect)
-        except:
+        except Exception:
             pass
 
     def render_graphics(self):
@@ -299,7 +316,7 @@ class GameApp:
             header = self.font_ui.render(
                 (
                     f"{'Rank':<8}{'Player Profile':<24}"
-                    f"{'Max Length'}"
+                    f"{'Score'}"
                 ),
                 True,
                 COLOR_TEXT_MUTED,
@@ -328,7 +345,7 @@ class GameApp:
 
                 r_txt = f"#{idx:<6}"
                 n_txt = f"{item['name'][:18]:<25}"
-                s_txt = f"{item['score']} segments"
+                s_txt = f"{item['score']} pts"
 
                 self.screen.blit(self.font_sm.render(r_txt, True, rank_color), (75, start_y))
                 self.screen.blit(self.font_sm.render(n_txt, True, COLOR_TEXT), (145, start_y))
@@ -362,6 +379,7 @@ class GameApp:
 
             hud_str = (
                 f"User Profile: {self.name_input.text}  │  "
+                f"Score: {self.score}  │  "
                 f"Length: {len(self.snake.body)} / {TOTAL_TILES}"
             )
             hud_surface = self.font_sm.render(hud_str, True, COLOR_TEXT)
@@ -391,7 +409,13 @@ class GameApp:
 
             self.snake.draw(self.screen)
 
-            if self.game_over:
+            if self.paused:
+                pause_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                pause_overlay.fill((16, 18, 23, 150))
+                self.screen.blit(pause_overlay, (0, 0))
+                pt = self.font_ui.render("PAUSED  —  Press P to Resume", True, (52, 152, 219))
+                self.screen.blit(pt, (WIDTH // 2 - pt.get_width() // 2, HEIGHT // 2 - pt.get_height() // 2))
+            elif self.game_over:
                 self.draw_overlay("CRITICAL COLLISION: GAME OVER", (231, 76, 60))
             elif self.game_won:
                 self.draw_overlay("ECOSYSTEM COMPLETED: VICTORY!", (46, 204, 113))

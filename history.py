@@ -30,6 +30,7 @@ class GameHistoryManager:
             "score": score,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         })
+        history.sort(key=lambda r: r["score"], reverse=True)
 
 
         try:

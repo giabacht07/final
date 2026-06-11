@@ -94,16 +94,16 @@ class Snake:
 
         self.body.insert(0, new_head)
 
-        if shrink:
-            shrink_amount = min(shrink, len(self.body) - 1)
-            for _ in range(shrink_amount):
-                self.body.pop()
-        elif grow:
+        if grow:
             extra_growth = max(0, grow - 1)
             for _ in range(extra_growth):
                 self.body.append(self.body[-1])
         else:
             self.body.pop()
+            if shrink:
+                shrink_amount = min(shrink, len(self.body) - 1)
+                for _ in range(shrink_amount):
+                    self.body.pop()
 
     def check_collision(self, bounds_w, bounds_h):
         """Check whether the snake has collided with the bounds or itself."""
